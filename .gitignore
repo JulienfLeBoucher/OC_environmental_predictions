@@ -3,3 +3,5 @@ __pycache__/*
 2016_Building*
 functions.py
 notes_consignes.md
+*.joblib
+*.csv
