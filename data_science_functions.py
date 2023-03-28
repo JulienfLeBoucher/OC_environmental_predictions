@@ -7,12 +7,12 @@ from sklearn.model_selection import KFold
 from sklearn.model_selection import cross_val_score
 from sklearn.model_selection import cross_val_predict
 from sklearn.metrics import r2_score
-
+from sklearn.metrics import PredictionErrorDisplay
 from scipy.stats import pearsonr
 
+import xgboost as xgb
+  
 # NUMERICAL/NUMERICAL Analysis
-
-
 def display_correlation_matrix(data, features=None):
     """Display the correlation matrix enlighten with a heatmap
 
@@ -108,10 +108,14 @@ def eta_squared(cat_var, num_var, precision=2):
     classes_names = cat_var.unique()
     grand_mean = num_var.mean()
     classes = []
+    # Compute the effective and the mean of each class name
     for c in classes_names:
         yi = num_var[cat_var == c]
         classes.append({"ni": len(yi), "class_mean": yi.mean()})
+        
     SSTotal = sum([(y - grand_mean) ** 2 for y in num_var])
+    # Compute the weighted sum of the squared difference between the 
+    # class mean and the grand mean. 
     SSBetween = sum([c["ni"] * (c["class_mean"] - grand_mean) ** 2 for c in classes])
     return round(SSBetween / SSTotal, precision)
 
@@ -363,48 +367,51 @@ def one_hot_encoding(data, cols, drop=None):
     return (enc, data)
 
 
-###
-
-
+### Linear regressions
 def linearRegressionSummary(model, column_names):
-    """Show a summary of the trained linear regression model"""
-    # Plot the coefficients as bars
-    fig = plt.figure(figsize=(8, len(column_names) / 3))
-    fig.suptitle("Linear Regression Coefficients", fontsize=16)
+    '''Show a summary of the trained linear regression model'''
+
+    # Plot the coeffients as bars
+    fig = plt.figure(figsize=(8, len(column_names)/3))
+    fig.suptitle('Linear Regression Coefficients', fontsize=16, y=1.1)
     rects = plt.barh(column_names, model.coef_, color="lightblue")
 
     # Annotate the bars with the coefficient values
     for rect in rects:
-        width = round(rect.get_width(), 4)
-        plt.gca().annotate(
-            "  {}  ".format(width),
-            xy=(0, rect.get_y()),
-            xytext=(0, 2),
-            textcoords="offset points",
-            ha="left" if width < 0 else "right",
-            va="bottom",
-        )
+        width = round(rect.get_width(), 2)
+        plt.gca().annotate('  {}  '.format(width),
+                    xy=(0, rect.get_y()),
+                    xytext=(0,2),  
+                    textcoords="offset points",  
+                    ha='left' if width<0 else 'left', va='bottom')        
     plt.show()
 
 
-def score(model, X, y):
+### Model evaluation
+def apply_score_func(metric, y_true, y_pred, precision=5):
+    """ Compute the score according the 'metric' 
+    
+    'metric' must be a series of the metrics dataframe I made
+    to regroup scoring aliases and scoring function of sklearn.
+    
+    WARNING, ensure the y's are passed in this order, it is not always
+    symmetric!"""
+    if metric.kwargs is not None:
+        return round(metric.func(y_true, y_pred, **metric.kwargs), precision)
+    else:
+        return round(metric.func(y_true, y_pred), precision)
+    
+def score(model, metric, X, y_true, precision=5):
     """Get the model prediction scores using the provided input and
-    target features"""
-    predictions = model.predict(X)
-    print("    R2", r2_score(y, predictions))
-
-
-def correlatedFeatures(dataset, threshold):
-    """Function to list features that are correlated
-    Adds the first of the correlated pair only (not both)"""
-    correlated_columns = set()
-    correlations = dataset.corr()
-    for i in range(len(correlations)):
-        for j in range(i):
-            if abs(correlations.iloc[i, j]) > threshold:
-                correlated_columns.add(correlations.columns[i])
-    return correlated_columns
-
+    target features
+    
+    metric must be in the dataframe metric with columns name and func"""
+    y_pred = model.predict(X)
+    print(
+        f"    {metric.name}",
+        apply_score_func(metric, y_true, y_pred)
+    )
+    return None
 
 def CV_evaluation(
         model, X, y, k=5, scoring="r2", seed=2,
@@ -413,37 +420,102 @@ def CV_evaluation(
     """Evaluate a model with the k-fold cross validation method."""
     # Create folds
     kfold = KFold(n_splits=k, shuffle=True, random_state=seed)
+    
     # Compute scores on folds
     results = cross_val_score(model, X, y, cv=kfold, scoring=scoring)
-    # Round, then compute mean and std
     
+    # Compute mean and std, then round
     mean_score = np.round(results.mean(), precision)
     std_score = np.round(results.std(), precision)
     results = np.round(results, precision)
     
+    # Handle cases where loss minimization is processed as 
+    # negative maximization
     if scoring.startswith("neg_"):
         mean_score = - mean_score
         results = results * (-1)
-        scoring = scoring.rstrip("neg_")  
+        scoring = scoring.lstrip("neg_")  
+    
+    # Print results    
     if not silent:
-        print(type(model).__name__)
-        print(
-            f"Cross-validation evaluation results w.r.t the "
-            f"{scoring} metric:\n"
-        )
-        print("    scores on folds:", results)
-        print("    mean score:", mean_score)
-        print("    std score deviation:", std_score)
+        print(f"Cross-validation evaluation : ")
+        print("    scores on folds: ", results)
+        print("    mean score: ", mean_score)
+        print("    std score deviation: ", std_score)
     return (results, mean_score, std_score)
 
-def initialize_evaluation_summary():
-    """ Create the evalutaion dataframe summary """
-    cols = [
-        "CV_train_score_mean",
-        "CV_train_score_std",
-        "computation_time",
-        "hyperparameters",
-        "CV_scores" "test_score",
-    ]
-    return pd.DataFrame(columns=cols)
 
+def plot_predictions_vs_real_values(
+    y_true, y_pred, show_actual=True, show_residual=True,
+):
+    """ Plot actual and residuals of predictions vs real values by 
+    default. This can be changed through the boolean parameters. """
+    if show_actual:
+        # displaying predictions vs real values
+        _, ax = plt.subplots(figsize=(5, 5))
+        _ = PredictionErrorDisplay.from_predictions(
+            y_true, y_pred, kind="actual_vs_predicted",
+            ax=ax, scatter_kwargs={"alpha": 0.5}
+        )
+        ax.set_title("Predictions vs real values on the test set")
+        plt.show()
+    if show_residual:    
+        # displaying predictions vs real values
+        _, ax = plt.subplots(figsize=(5, 5))
+        _ = PredictionErrorDisplay.from_predictions(
+            y_true, y_pred, kind="residual_vs_predicted",
+            ax=ax, scatter_kwargs={"alpha": 0.5}
+        )
+        ax.set_title("Residual vs real values on the test set")
+        plt.show()
+    return None
+
+def xgb_cv(
+    alg, X_train, y_train,
+    metric='rmse',
+    cv_folds=5,
+    early_stopping_rounds=10,
+    verbose=True
+):
+    """ Compute CV in order to find the right number of estimators before 
+    it over-fits. 
+    
+    Returns a dataframe with scores' mean and std.
+    
+    The shape[0] of the dataframe is the optimal number of trees"""
+    xgb_param = alg.get_xgb_params()
+    xgb_data = xgb.DMatrix(X_train, y_train)
+    cv_result = xgb.cv(
+        xgb_param,
+        xgb_data,
+        num_boost_round=alg.get_params()['n_estimators'],
+        nfold=cv_folds,
+        verbose_eval=verbose,
+        metrics=metric,
+        early_stopping_rounds=early_stopping_rounds,
+    )
+    return cv_result
+
+def optimize_estimators_number(
+    alg: xgb.Booster,
+    X_train: pd.DataFrame,
+    y_train: pd.DataFrame,
+    metric='rmse',
+    cv_folds=5,
+    early_stopping_rounds=10,
+    verbose=True
+):
+    """ Compute a cross-validation to find the optimal number of estimators
+    to use for a certain booster configuration and set it to that number. 
+    
+    Return the optimized booster."""
+    cv_result = xgb_cv(
+        alg, X_train, y_train,
+        metric=metric, cv_folds=cv_folds, 
+        early_stopping_rounds=early_stopping_rounds,
+        verbose=verbose
+    )
+    if verbose:
+        display(cv_result.tail(10))
+
+    return alg.set_params(n_estimators=cv_result.shape[0])
