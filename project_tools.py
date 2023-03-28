@@ -1,3 +1,10 @@
+### This file was helpful to fly over the EDA while writing down some
+# TODO's if i'd want to easily go back to the data cleansing
+# and feature engineering.
+#
+# It helped not to lose too much time and focus on the core of the
+# project.
+
 ### CONSTANTS
 PPT = 'PrimaryPropertyType'
 GHG_TARGET = 'TotalGHGEmissions'
